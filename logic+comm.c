@@ -55,6 +55,11 @@ int main(int argc, char** argv)  {
   for (index = optind; index < argc; index++)
     printf ("Unknown argument ignored: %s\n", argv[index]);
 
+  if (!portName && !listPorts) {
+    printf ("Nothing to do\n");
+    return 0;
+  }
+
   int i;
   struct sp_port **ports;
   struct sp_port *port = NULL;
@@ -65,11 +70,25 @@ int main(int argc, char** argv)  {
       printf ("Found port %s\n", sp_get_port_name(ports[i]));
     if (portName && !strcmp(sp_get_port_name(ports[i]), portName)) port = ports[i];
   }
-  if (!portName) return 1;
+  if (!portName) return 0;
+
   if (!port) {
     printErr("Unable to find port ", portName, (sp_return) 1);
     return 1;
   }
+  ret = sp_open(port, SP_MODE_READ);
+  printErr("Unable to open port ", sp_get_port_name(port), ret);
+
+  // struct sp_port_config* config;
+  // int baudrate;
+  // ret = sp_new_config(&config);
+  // printErr("sp_new_config err", "", ret);
+  // ret = sp_get_config(port, config);
+  // printErr("sp_get_config err", "", ret);
+  // ret = sp_get_config_baudrate(config, &baudrate);
+  // printErr("sp_get_config_baudrate err", "", ret);
+  // printf("baudrate %d\n", baudrate);
+
   ret = sp_set_baudrate(port, 115200);
   printErr("sp_set_baudrate err, ", "115200", ret);
   ret = sp_set_bits(port, 8);
@@ -78,8 +97,8 @@ int main(int argc, char** argv)  {
   printErr("sp_set_parity err, ", "SP_PARITY_NONE", ret);
   ret = sp_set_stopbits(port, 1);
   printErr("sp_set_stopbits err, ", "1", ret);
-  ret = sp_open(port, SP_MODE_READ);
-  printErr("Unable to open port ", sp_get_port_name(port), ret);
+  ret = sp_flush(port, SP_BUF_INPUT);
+  printErr("sp_flush err, ", "1", ret);
 
   printf("sp_input_waiting: %d\n", sp_input_waiting(port));
 
