@@ -6,10 +6,9 @@
 #include <libserialport.h>
 
 void printErr(const char* hdr1, const char* hdr2, sp_return ret) {
-  if (ret) {
+  if (ret < 0) {
     char errStr[15];
     switch (ret) {
-      case SP_OK:       strcpy(errStr, ", SP_OK");       break;
       case SP_ERR_ARG:  strcpy(errStr, ", SP_ERR_ARG");  break;
       case SP_ERR_FAIL: strcpy(errStr, ", SP_ERR_FAIL"); break;
       case SP_ERR_MEM:  strcpy(errStr, ", SP_ERR_MEM");  break;
@@ -56,8 +55,9 @@ int main(int argc, char** argv)  {
     printf ("Unknown argument ignored: %s\n", argv[index]);
 
   if (!portName && !listPorts) {
-    printf ("Nothing to do\n");
-    return 0;
+    // printf ("Nothing to do\n");
+    portName = (char*) "/dev/ttyACM0";
+    // return 0;
   }
 
   int i;
@@ -76,7 +76,7 @@ int main(int argc, char** argv)  {
     printErr("Unable to find port ", portName, (sp_return) 1);
     return 1;
   }
-  ret = sp_open(port, SP_MODE_READ);
+  ret = sp_open(port, SP_MODE_READ_WRITE);
   printErr("Unable to open port ", sp_get_port_name(port), ret);
 
   // struct sp_port_config* config;
@@ -97,20 +97,22 @@ int main(int argc, char** argv)  {
   printErr("sp_set_parity err, ", "SP_PARITY_NONE", ret);
   ret = sp_set_stopbits(port, 1);
   printErr("sp_set_stopbits err, ", "1", ret);
-  ret = sp_flush(port, SP_BUF_INPUT);
+  ret = sp_flush(port, SP_BUF_BOTH);
   printErr("sp_flush err, ", "1", ret);
 
-  printf("sp_input_waiting: %d\n", sp_input_waiting(port));
+  printf("Listening on %s\n", portName);
 
-  char chars[101] = "";
-  int bytesRead = sp_blocking_read_next(port, chars, 100, 0);
-  if (bytesRead < 0) {
-    printf("Invalid data read from port: %d\n", bytesRead);
-    return 1;
+  char wbuf[101] = "";
+  char rbuf[101] = "";
+  while(1) {
+    int bytesRead = sp_nonblocking_read(port, rbuf, 100);
+    printErr("sp_nonblocking_write err, ", "", (sp_return) bytesRead);
+    rbuf[bytesRead] = 0;
+    printf("%s", rbuf);
+
+    // sleep(1);
+    wbuf[0] = '0';
+    ret = sp_blocking_write(port,wbuf,1,0);
+    printErr("sp_nonblocking_write err, ", "", ret);
   }
-  chars[bytesRead] = 0;
-  printf("%s\n", chars);
-
-  sp_close(port);
-  sp_free_port_list(ports);
 }
