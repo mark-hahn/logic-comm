@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <regex.h>
 #include <libserialport.h>
+#include "logic+comm.h"
 
 void printErr(const char* hdr1, const char* hdr2, sp_return ret) {
   if (ret < 0) {
@@ -23,12 +25,44 @@ void printErr(const char* hdr1, const char* hdr2, sp_return ret) {
   }
 }
 
+int matchLine(char* line) {
+  int r, regExRet;
+  for (r=0; r < numRx; r++) {
+    regExRet = regexec(&regexes[r], line, 10, rxMatches, 0);
+    if (!regExRet) return r;
+  }
+  return -1;
+}
+
+void showMatches(char* line, int lineNum) {
+  int m;
+  printf("matches in line %d:", lineNum);
+  for(m=0; m < maxRxMatches; m++) {
+    if (rxMatches[m].rm_so != -1) {
+      char save = line[rxMatches[m].rm_eo];
+      line[rxMatches[m].rm_eo] = 0;
+      printf(" '%s'", &line[rxMatches[m].rm_so]);
+      line[rxMatches[m].rm_eo] = save;
+    } else break;
+  }
+  printf("\n");
+}
+
 int main(int argc, char** argv)  {
   sp_return ret;
   char *portName = NULL;
+  char *fileName = NULL;
+  char *line = NULL;
+  FILE* fd;
+  size_t len = 0;
+  ssize_t bytesRead;
   bool listPorts = false;
-  int index;
-  int c;
+  int c,err, r;
+
+  for (r=0; r < numRx; r++) {
+    err = regcomp(&regexes[r], rxStrings[r], 0);
+    if (err) printf("err regcomp %d %d %s\n", r, err, rxStrings[r]);
+  }
 
   opterr = 0;
   while ((c = getopt (argc, argv, "lp:")) != -1) {
@@ -51,13 +85,18 @@ int main(int argc, char** argv)  {
         abort ();
     }
   }
-  for (index = optind; index < argc; index++)
-    printf ("Unknown argument ignored: %s\n", argv[index]);
-
+  if(optind < argc) {
+    fileName = argv[optind];
+    fd = fopen((const char*) fileName, "r");
+    if (!fd) {
+      printf ("File not found: %s\n", fileName);
+      return 1;
+    }
+  }
   if (!portName && !listPorts) {
     // printf ("Nothing to do\n");
-    portName = (char*) "/dev/ttyACM0";
     // return 0;
+    portName = (char*) "/dev/ttyACM0";
   }
 
   int i;
@@ -66,28 +105,15 @@ int main(int argc, char** argv)  {
 
   sp_list_ports(&ports);
   for (i=0; ports[i]; i++) {
-    if (listPorts)
-      printf ("Found port %s\n", sp_get_port_name(ports[i]));
+    if (listPorts) printf ("Found port %s\n", sp_get_port_name(ports[i]));
     if (portName && !strcmp(sp_get_port_name(ports[i]), portName)) port = ports[i];
   }
-  if (!portName) return 0;
-
   if (!port) {
-    printErr("Unable to find port ", portName, (sp_return) 1);
+    printErr("Unable to find port ", portName, (sp_return) -99);
     return 1;
   }
   ret = sp_open(port, SP_MODE_READ_WRITE);
   printErr("Unable to open port ", sp_get_port_name(port), ret);
-
-  // struct sp_port_config* config;
-  // int baudrate;
-  // ret = sp_new_config(&config);
-  // printErr("sp_new_config err", "", ret);
-  // ret = sp_get_config(port, config);
-  // printErr("sp_get_config err", "", ret);
-  // ret = sp_get_config_baudrate(config, &baudrate);
-  // printErr("sp_get_config_baudrate err", "", ret);
-  // printf("baudrate %d\n", baudrate);
 
   ret = sp_set_baudrate(port, 115200);
   printErr("sp_set_baudrate err, ", "115200", ret);
@@ -100,19 +126,63 @@ int main(int argc, char** argv)  {
   ret = sp_flush(port, SP_BUF_BOTH);
   printErr("sp_flush err, ", "1", ret);
 
-  printf("Listening on %s\n", portName);
+  printf("Using   %s\n", portName);
+  if (fileName) printf("Sending %s\n", fileName);
 
-  char wbuf[101] = "";
-  char rbuf[101] = "";
+  #define PAUSE   0xf0
+  #define UNPAUSE 0xf1
+
+  char recvChar;
+  bool paused = false;
+  int lineNum = 0;
+
   while(1) {
-    int bytesRead = sp_nonblocking_read(port, rbuf, 100);
-    printErr("sp_nonblocking_write err, ", "", (sp_return) bytesRead);
-    rbuf[bytesRead] = 0;
-    printf("%s", rbuf);
-
-    sleep(1);
-    wbuf[0] = 1;
-    ret = sp_blocking_write(port,wbuf,1,0);
-    printErr("sp_nonblocking_write err, ", "", ret);
+    recvChar = 0;
+    ret = sp_nonblocking_read(port, &recvChar, 1);
+    printErr("sp_nonblocking_read err, ", "", ret);
+    if (recvChar) {
+      if (recvChar == PAUSE) paused = true;
+      else if (recvChar == UNPAUSE) paused = false;
+      else printf("%c", recvChar);
+    }
+    if(!paused) {
+      bytesRead = getline(&line, &len, fd);
+      if(bytesRead == -1) {
+        printf("\nFinished sending file");
+        return 0;
+      }
+      if (line[strlen(line)-1] == '\n')
+          line[strlen(line)-1] = 0;
+      lineNum++;
+      if(lineNum % 100 == 0) {
+        printf(".");
+      }
+      int rxMatchIdx = matchLine(line);
+      // printf("line match %d, %s\n", rxMatchIdx, line);
+      switch (rxMatchIdx) {
+        case -1:
+          printf("no regex match in line %d, '%s'\n", lineNum, line);
+          return 1;
+        case 0: /* comment */    showMatches(line, lineNum); break;
+        case 1: /* empty line */ showMatches(line, lineNum); break;
+        case 2: /* TRST */       showMatches(line, lineNum); break;
+        // case 0: /*  */ break;
+        // case 0: /*  */ break;
+        // case 0: /*  */ break;
+        // case 0: /*  */ break;
+        // case 0: /*  */ break;
+        // case 0: /*  */ break;
+        // case 0: /*  */ break;
+        // case 0: /*  */ break;
+        default:
+          printf("Invalid line match %d, '%s'\n", rxMatchIdx, line);
+          return 1;
+      }
+    }
+    //   wbuf[0] = 0;
+    //   ret = sp_blocking_write(port,wbuf,1,0);
+    //   printErr("sp_blocking_write err, ", "", ret);
+    //   paused = true;
+    // }
   }
 }
