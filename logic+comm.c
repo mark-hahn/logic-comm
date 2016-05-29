@@ -110,8 +110,8 @@ int main(int argc, char** argv)  {
     rbuf[bytesRead] = 0;
     printf("%s", rbuf);
 
-    // sleep(1);
-    wbuf[0] = '0';
+    sleep(1);
+    wbuf[0] = 1;
     ret = sp_blocking_write(port,wbuf,1,0);
     printErr("sp_nonblocking_write err, ", "", ret);
   }
