@@ -1,4 +1,8 @@
 #   -*-  grammar-ext: sh  -*-
 
-g++ -Wall -o logic+comm logic+comm.c -I libserialport libserialport/.libs/libserialport.a
+g++ -Wall -o logic+comm                                   \
+     logic+comm.c -lpcre                                  \
+    -I libserialport libserialport/.libs/libserialport.a
+    
+
 logic+comm $@

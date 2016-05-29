@@ -3,9 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <regex.h>
 #include <libserialport.h>
-#include "logic+comm.h"
+// #include "logic+comm.h"
+
+#define FBUF_SIZE 64
 
 void printErr(const char* hdr1, const char* hdr2, sp_return ret) {
   if (ret < 0) {
@@ -25,44 +26,16 @@ void printErr(const char* hdr1, const char* hdr2, sp_return ret) {
   }
 }
 
-int matchLine(char* line) {
-  int r, regExRet;
-  for (r=0; r < numRx; r++) {
-    regExRet = regexec(&regexes[r], line, 10, rxMatches, 0);
-    if (!regExRet) return r;
-  }
-  return -1;
-}
-
-void showMatches(char* line, int lineNum) {
-  int m;
-  printf("matches in line %d:", lineNum);
-  for(m=0; m < maxRxMatches; m++) {
-    if (rxMatches[m].rm_so != -1) {
-      char save = line[rxMatches[m].rm_eo];
-      line[rxMatches[m].rm_eo] = 0;
-      printf(" '%s'", &line[rxMatches[m].rm_so]);
-      line[rxMatches[m].rm_eo] = save;
-    } else break;
-  }
-  printf("\n");
-}
-
 int main(int argc, char** argv)  {
   sp_return ret;
   char *portName = NULL;
   char *fileName = NULL;
-  char *line = NULL;
   FILE* fd;
   size_t len = 0;
   ssize_t bytesRead;
   bool listPorts = false;
-  int c,err, r;
-
-  for (r=0; r < numRx; r++) {
-    err = regcomp(&regexes[r], rxStrings[r], 0);
-    if (err) printf("err regcomp %d %d %s\n", r, err, rxStrings[r]);
-  }
+  char fbuf[FBUF_SIZE];
+  int c;
 
   opterr = 0;
   while ((c = getopt (argc, argv, "lp:")) != -1) {
@@ -94,8 +67,6 @@ int main(int argc, char** argv)  {
     }
   }
   if (!portName && !listPorts) {
-    // printf ("Nothing to do\n");
-    // return 0;
     portName = (char*) "/dev/ttyACM0";
   }
 
@@ -134,7 +105,6 @@ int main(int argc, char** argv)  {
 
   char recvChar;
   bool paused = false;
-  int lineNum = 0;
 
   while(1) {
     recvChar = 0;
@@ -146,43 +116,13 @@ int main(int argc, char** argv)  {
       else printf("%c", recvChar);
     }
     if(!paused) {
-      bytesRead = getline(&line, &len, fd);
+      bytesRead = fread(fbuf, 1, FBUF_SIZE, fd);
       if(bytesRead == -1) {
         printf("\nFinished sending file");
-        return 0;
+        exit(0);
       }
-      if (line[strlen(line)-1] == '\n')
-          line[strlen(line)-1] = 0;
-      lineNum++;
-      if(lineNum % 100 == 0) {
-        printf(".");
-      }
-      int rxMatchIdx = matchLine(line);
-      // printf("line match %d, %s\n", rxMatchIdx, line);
-      switch (rxMatchIdx) {
-        case -1:
-          printf("no regex match in line %d, '%s'\n", lineNum, line);
-          return 1;
-        case 0: /* comment */    showMatches(line, lineNum); break;
-        case 1: /* empty line */ showMatches(line, lineNum); break;
-        case 2: /* TRST */       showMatches(line, lineNum); break;
-        // case 0: /*  */ break;
-        // case 0: /*  */ break;
-        // case 0: /*  */ break;
-        // case 0: /*  */ break;
-        // case 0: /*  */ break;
-        // case 0: /*  */ break;
-        // case 0: /*  */ break;
-        // case 0: /*  */ break;
-        default:
-          printf("Invalid line match %d, '%s'\n", rxMatchIdx, line);
-          return 1;
-      }
+      ret = sp_blocking_write(port, fbuf, bytesRead, 0);
+      printErr("sp_blocking_write err, ", "", ret);
     }
-    //   wbuf[0] = 0;
-    //   ret = sp_blocking_write(port,wbuf,1,0);
-    //   printErr("sp_blocking_write err, ", "", ret);
-    //   paused = true;
-    // }
   }
 }
